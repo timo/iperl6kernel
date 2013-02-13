@@ -1,9 +1,9 @@
 import zmq
-import uuid
-import hmac
+#import uuid
+#import hmac
 
-from datetime import datetime
-from subprocess import Popen, PIPE
+#from datetime import datetime
+#from subprocess import Popen, PIPE
 
 import json
 
@@ -38,7 +38,6 @@ my_username = "camilla"
         #'engine' : my_ident,
         #'started' : datetime.now(),
     #}
-
 
 #rakudo = Popen("perl6", stdin=PIPE, stdout=PIPE)
 #if rakudo.stdout.read(2) != "> ":

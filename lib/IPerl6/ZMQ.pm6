@@ -12,7 +12,7 @@ our class Stdin {
     }
 }
 
-multi send-zmq($data, :$SNDMORE?) {
+multi send-zmq($data, :$SNDMORE?, :$PUBLISH?) {
     state @send-buf;
     push @send-buf, $data;
     unless $SNDMORE {
@@ -95,6 +95,9 @@ our class Protocol {
 
     method get_command {
         my $msg = Message.recv;
+        if $msg.header<msg_type> eq "execute_request" {
+            
+        }
     }
 }
 
