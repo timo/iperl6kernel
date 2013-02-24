@@ -1,6 +1,8 @@
 module IPerl6::ZMQ;
 
-say "you are about to experience...";
+say "i'm being run!";
+
+$*ZMQ_PROTOCOL.set(IPerl6::ZMQ::Protocol.new());
 
 use JSON::Tiny;
 use Net::ZMQ;
@@ -17,7 +19,7 @@ $stdinsock.bind: "tcp://*:5553";
 
 my \DELIM := "<IDS|MSG>";
 
-our class Stdin {
+my class Stdin {
     has $.protocol;
 
     method read($num) {
@@ -50,7 +52,7 @@ sub recv-zmq($socket --> List) {
     return @res;
 }
 
-class Message {
+my class Message {
     has $.id;
     has $.parent-header;
     has $.header;
@@ -91,7 +93,7 @@ class Message {
     }
 }
 
-our class Protocol {
+our class IPerl6::ZMQ::Protocol {
     has $.username = "camilla";
     has $.session = q:x{uuidgen};
     has $.ident = q:x{uuidgen};
@@ -124,6 +126,3 @@ our class Protocol {
     }
 }
 
-say "iperl6!";
-
-$*ZMQ_PROTOCOL.set(Protocol.new());
