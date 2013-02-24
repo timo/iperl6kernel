@@ -1,6 +1,19 @@
 module IPerl6::ZMQ;
 
+say "you are about to experience...";
+
 use JSON::Tiny;
+use Net::ZMQ;
+use Net::ZMQ::Constants;
+
+my Net::ZMQ::Context $zmqctx .= new;
+my Net::ZMQ::Socket $pubsock .= new($zmqctx, ZMQ_PUB);
+my Net::ZMQ::Socket $shellsock .= new($zmqctx, ZMQ_ROUTER);
+my Net::ZMQ::Socket $stdinsock .= new($zmqctx, ZMQ_ROUTER);
+
+$pubsock.bind:   "tcp://*:5551";
+$shellsock.bind: "tcp://*:5552";
+$stdinsock.bind: "tcp://*:5553";
 
 my \DELIM := "<IDS|MSG>";
 
@@ -28,10 +41,13 @@ multi send-zmq(@data-parts) {
     send-zmq($_) for @data-parts[*-1];
 }
 
-sub recv-zmq(--> List) {
-    my $datlen = $*ZMQIN.get();
-    my $data = $*ZMQIN.read($datlen).decode("utf8");
-    return from-json($data);
+sub recv-zmq($socket --> List) {
+    my @res;
+    @res.push($socket.recv);
+    while $socket.getsockopt(ZMQ_RCVMORE) {
+        @res.push($socket.recv);
+    }
+    return @res;
 }
 
 class Message {
@@ -44,7 +60,7 @@ class Message {
     has $.hmac;
 
     submethod recv(--> Message) {
-        my $data = recv-zmq;
+        my $data = recv-zmq($shellsock);
         my $id = $data.shift;
         die "did not find a delimiter after 1 id" if $data.shift ne DELIM;
         my &d = { $data.shift };
@@ -94,11 +110,20 @@ our class Protocol {
     }
 
     method get_command {
+        say "going to receive a command now";
         my $msg = Message.recv;
-        if $msg.header<msg_type> eq "execute_request" {
-            
+        given my $msgtype = $msg.header<msg_type> {
+            when "execute_request" {
+                say "going to do an execute request";
+                sub exec_req_cb ($result, $stdout, $stderr) {
+                    say "i've done it!";
+                }
+                return ($msgtype, $msg.content<code>, &exec_req_cb);
+            }
         }
     }
 }
 
-$*ZMQ_PROTOCOL = Protocol.new();
+say "iperl6!";
+
+$*ZMQ_PROTOCOL.set(Protocol.new());

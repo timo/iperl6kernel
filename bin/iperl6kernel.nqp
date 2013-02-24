@@ -3,6 +3,22 @@
 use Perl6::Compiler;
 use Perl6::Actions;
 
+# pass on some handler object that allows interfacing
+# with the ZMQ wrapper
+class ProtocolGetter {
+    has $!proto;
+
+    method set($foo) {
+        nqp::say("setting protocol instance");
+        $*W.add_object($foo);
+        $!proto := $foo;
+    }
+
+    method protocol() {
+        $!proto;
+    }
+};
+
 class ChattyRepl is Perl6::Compiler {
     method interactive(*%adverbs) {
         # copied 1:1 from HLL::Compiler {{{
@@ -38,8 +54,11 @@ class ChattyRepl is Perl6::Compiler {
         while 1 {
             last unless $stdin;
 
-            my $prompt := self.interactive_prompt // '> ';
-            my $code := $stdin.readline_interactive(~$prompt);
+            #my $code := $stdin.readline_interactive(~$prompt);
+            my $result := $*ZMQ_PROTOCOL.protocol.get_command();
+            my $command := $result.shift;
+            my $code := $result.shift;
+            my $callback := $result.shift;
 
             last if nqp::isnull($code);
             unless nqp::defined($code) {
@@ -48,10 +67,11 @@ class ChattyRepl is Perl6::Compiler {
             }
 
             # Set the current position of stdout for autoprinting control
-            my $*AUTOPRINTPOS := (pir::getinterp__P()).stdout_handle().tell();
+            #my $*AUTOPRINTPOS := (pir::getinterp__P()).stdout_handle().tell();
             my $*CTXSAVE := self;
             my $*MAIN_CTX;
 
+            my $pretty-out := "";
             if $code {
                 $code := $code ~ "\n";
                 my $output;
@@ -80,18 +100,22 @@ class ChattyRepl is Perl6::Compiler {
                     }
                     $save_ctx := $interactive_ctx;
                 }
-                next if nqp::isnull($output);
 
-                if !$target {
-                    self.autoprint($output);
-                } elsif $target eq 'pir' {
-                   nqp::say($output);
-                } else {
-                   self.dumper($output, $target, |%adverbs);
+                if !nqp::isnull($output) && nqp::can($output, 'dump') {
+                    $pretty-out := ($output.dump());
                 }
             }
+            $callback($pretty-out, "", "");
         }
     }
+}
+
+sub hll-config($config) {
+    $config<name>           := 'rakudo';
+    $config<version>        := '';
+    $config<release-number> := '';
+    $config<codename>       := '';
+    $config<build-date>     := '2013-02-24T16:57:45Z';
 }
 
 sub MAIN(@ARGS) {
@@ -101,7 +125,7 @@ sub MAIN(@ARGS) {
     pir::rakudo_dynop_setup__v();
 
     # bump up the recursion limit
-    pir:getinterp__P().recursion_limit(100000);
+    pir::getinterp__P().recursion_limit(100000);
 
     # create and configure a compiler object
     my $comp := ChattyRepl.new();
@@ -132,9 +156,7 @@ sub MAIN(@ARGS) {
     @ARGS.unshift('-MIPerl6::ZMQ');
     @ARGS.unshift($pname);
 
-    # pass on some handler object that allows interfacing
-    # with the ZMQ wrapper
-    my $*ZMQ_COMM := 1;
+    my $*ZMQ_PROTOCOL := ProtocolGetter.new();
 
     # Enter the compiler.
     $comp.command_line(@ARGS, :encoding('utf8'), :transcode('ascii iso-8859-1'));

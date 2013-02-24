@@ -1,0 +1,7 @@
+{
+    "name"        : "IPython::Rakudo",
+    "version"     : "*",
+    "description" : "an ipython kernel for rakudo",
+    "depends"     : [],
+    "source-url"  : "git://github.com/timo/iperl6kernel.git"
+}
