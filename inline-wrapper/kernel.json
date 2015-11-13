@@ -1,0 +1,4 @@
+{
+    "argv": ["perl6", "/home/arne/programming/perl/iperl6kernel/inline-wrapper/kernel.p6", "{connection_file}"],
+    "display_name": "Perl 6"
+}
