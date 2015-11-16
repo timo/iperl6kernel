@@ -1,0 +1,4 @@
+{
+    "argv": ["perl6", "-M", "IPerl6", "-e", "", "{connection_file}"],
+    "display_name": "Perl 6"
+}

@@ -1,7 +1,7 @@
 {
-    "name"        : "IPython::Rakudo",
+    "name"        : "IPerl6",
     "version"     : "*",
     "description" : "an ipython kernel for rakudo",
-    "depends"     : [],
+    "depends"     : ["Digest", "Digest::HMAC", "JSON::Fast", "Net::ZMQ"],
     "source-url"  : "git://github.com/timo/iperl6kernel.git"
 }
