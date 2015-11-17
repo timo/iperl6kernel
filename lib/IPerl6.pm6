@@ -86,25 +86,49 @@ method start() {
             $!hb_socket.send: $!hb_socket.receive(0);
         }
         if poll_one($!shell, 0, :in) {
-            say "# Message on shell:";
-            self!read_message: $!shell;
+            self!shell_message
         }
         if poll_one($!control, 0, :in) {
             say "# Message on control:";
-            self!read_message: $!control;
+            say self!read_message: $!control;
         }
         if poll_one($!iopub, 0, :in) {
             say "# Message on iopub:";
-            self!read_message: $!iopub;
+            say self!read_message: $!iopub;
         }
         if poll_one($!stdin, 0, :in) {
             say "# Message on stdin:";
-            self!read_message: $!stdin;
+            say self!read_message: $!stdin;
         }
         $i++
     }
 }
 
+method !shell_message() {
+    say "# Message on shell:";
+    my $message = self!read_message: $!shell;
+    given $message<header><msg_type> {
+        when 'kernel_info_request' {
+            my $reply = {
+                protocol_version => '5.0',
+                implementation => 'IPerl6',
+                language_info => {
+                    name => 'perl6',
+                    version => '0.1.0',
+                    mimetype => 'text/plain',
+                    file_extension => '.p6',
+                },
+                banner => 'Welcome to IPerl6!',
+            };
+            self!send: $!shell, $reply, type => 'kernel_info_reply', parent => $message
+        }
+        default { die "Unknown message type: {to-json $message<header>}" }
+    }
+}
+
+# Str.encode returns a Blob[unit8], whereas we want a Buf[uint8] in the eqv
+# check below, so we have to construct the appropriate thing by hand here.
+my buf8 $separator = buf8.new: "<IDS|MSG>".encode;
 method !read_message(Net::ZMQ::Socket $s) {
     my buf8 @routing;
     my buf8 @message;
@@ -142,6 +166,26 @@ method !read_message(Net::ZMQ::Socket $s) {
 
     return {ids => @routing, header => $header, parent => $parent,
         metadata => $metadata, content => $content, extra_data => @message};
+}
+
+method !send($socket, $message, :$type, :$parent) {
+    $socket.send: "<IDS|MSG>", ZMQ_SNDMORE;
+
+    my $header = {};
+    my $metadata = {};
+
+    my $header_bytes  = to-json($header).encode;
+    my $parent_bytes  = to-json($parent<header>).encode;
+    my $meta_bytes    = to-json($metadata).encode;
+    my $content_bytes = to-json($message).encode;
+
+    my $hmac = hmac-hex $!key, $header_bytes ~ $parent_bytes ~ $meta_bytes ~ $content_bytes, &sha256;
+
+    $socket.send: $hmac, ZMQ_SNDMORE;
+    $socket.send: $header_bytes, ZMQ_SNDMORE;
+    $socket.send: $parent_bytes, ZMQ_SNDMORE;
+    $socket.send: $meta_bytes, ZMQ_SNDMORE;
+    $socket.send: $content_bytes;
 }
 
 sub MAIN(Str $connection) is export {
