@@ -106,22 +106,42 @@ method start() {
 }
 
 method !read_message(Net::ZMQ::Socket $s) {
-    my $ids = $s.receive.data.decode;
-    my $delim = $s.receive.data.decode;
-    my $hmac = $s.receive.data.decode;
-    my $raw_header   = $s.receive.data;
-    my $raw_parent   = $s.receive.data;
-    my $raw_metadata = $s.receive.data;
-    my $raw_content  = $s.receive.data;
+    my buf8 @routing;
+    my buf8 @message;
+    my $separated = False;
 
-    my $verify = hmac-hex $!key, $raw_header ~ $raw_parent ~ $raw_metadata ~ $raw_content, &sha256;
+    # A message from the IPython frontend is sent in several parts. First is a
+    # sequence of socket ids for the originating sockets; several because ZMQ
+    # supports routing messages over many sockets. Next is the "<IDS|MSG>"
+    # separator to signal the start of the IPython part of the message.
+    #
+    # The IPython message consists of a HMAC, a header, a parent header,
+    # metadata, a message body, and possibly some additional data blobs; in
+    # that order.
+    loop {
+        my buf8 $data = $s.receive.data;
 
-    my $header   = from-json $raw_header.decode;
-    my $parent   = from-json $raw_parent.decode;
-    my $metadata = from-json $raw_metadata.decode;
-    my $content  = from-json $raw_content.decode;
-    say to-json({ids => $ids, hmac => $hmac eq $verify ?? "ok" !! "BAD", header => $header, parent => $parent,
-        metadata => $metadata, content => $content});
+        if not $separated and not $data eqv $separator { @routing.push: $data }
+        elsif not $separated and $data eqv $separator  {
+            $separated = True;
+            next;
+        }
+        else { @message.push: $data }
+
+        last if not $s.getopt: ZMQ_RCVMORE;
+    }
+
+    say "# routing={+@routing}; message={+@message}";
+    my $hmac = hmac-hex $!key, @message[1] ~ @message[2] ~ @message[3] ~ @message[4], &sha256;
+    die "HMAC verification failed!" if $hmac ne @message.shift.decode;
+
+    my $header   = from-json @message.shift.decode;
+    my $parent   = from-json @message.shift.decode;
+    my $metadata = from-json @message.shift.decode;
+    my $content  = from-json @message.shift.decode;
+
+    return {ids => @routing, header => $header, parent => $parent,
+        metadata => $metadata, content => $content, extra_data => @message};
 }
 
 sub MAIN(Str $connection) is export {
