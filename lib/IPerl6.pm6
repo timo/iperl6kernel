@@ -148,13 +148,25 @@ method !shell_message() {
         when 'execute_request' {
             self!execute: $message;
         }
+        when 'inspect_request' { die 'Inspection NYI' }
+        when 'complete_request' { die 'Completion NYI' }
+        when 'is_complete_request' { die 'Is-complete NYI' }
+        when 'connect_request' { die 'Connect NYI' }
+        when 'shutdown_request' { die 'Shutdown/restart NYI' }
+        # Comms are a way for kernels and frontends to extend the IPython
+        # protocol with custom messages. Since we currently don't support any
+        # extensions, when can just ignore the messages related to them and
+        # return a hardcoded empty list of currently open comms.
+        when 'comm_info_request' { self!send: $!shell, {comms => {}}, type => 'comm_info_reply', parent => $message }
+        when 'comm_open' {}
+        when 'comm_msg' {}
+        when 'comm_close' {}
         default { die "Unknown message type: {to-json $message<header>}\n{to-json $message<content>}" }
     }
 }
 
 method !history_request($message) {
-    # XXX: Since we haven't actually implemented execution yet, we can just
-    # cheat here and always send back an empty history list.
+    # TODO: Actually implement this.
     self!send: $!shell, {history => []}, type => 'history_reply', parent => $message;
 }
 
