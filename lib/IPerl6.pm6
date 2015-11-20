@@ -1,16 +1,26 @@
 unit class IPerl6;
 
+use nqp;
+
 use Digest::HMAC;
 use Digest::SHA;
 use JSON::Fast;
 use Net::ZMQ;
 use Net::ZMQ::Constants;
 use Net::ZMQ::Poll;
+use UUID;
+
+use IPerl6::Gobble;
 
 has Net::ZMQ::Context $!ctx;
 has $!transport;
 has $!ip;
 has $!key;
+has $!session = ~UUID.new: :version(4);
+has $!stdout  = IPerl6::Gobble.new;
+has $!stderr  = IPerl6::Gobble.new;
+has $!exec_counter = 1;
+has @!history = ();
 submethod BUILD(:%connection) {
     $!ctx .= new;
     $!transport = %connection<transport>;
@@ -19,6 +29,7 @@ submethod BUILD(:%connection) {
 
     self!setup_sockets(%connection);
     self!setup_heartbeat(%connection);
+    self!setup_compiler;
 }
 
 has Net::ZMQ::Socket $!shell;
@@ -31,6 +42,8 @@ method !setup_sockets(%connection) {
     $!iopub   = self!socket: ZMQ_PUB,    %connection<iopub_port>;
     $!stdin   = self!socket: ZMQ_ROUTER, %connection<stdin_port>;
     $!control = self!socket: ZMQ_ROUTER, %connection<control_port>;
+
+    self!starting;
 }
 
 method !socket($type, $port) {
@@ -40,10 +53,18 @@ method !socket($type, $port) {
     return $s;
 }
 
+has $!save_ctx;
+has $!compiler;
+method !setup_compiler() {
+    $!save_ctx := nqp::null();
+    $!compiler := nqp::getcomp('perl6');
+}
+
 #has Thread $!hb_thread;
 has Net::ZMQ::Socket $!hb_socket;
 method !setup_heartbeat(%connection) {
-    $!hb_socket = self!socket: ZMQ_ROUTER, %connection<hb_port>;
+    $!hb_socket = self!socket: ZMQ_REP, %connection<hb_port>;
+    #$!hb_socket = self!socket: ZMQ_ROUTER, %connection<hb_port>;
 
     # There's a bug on Rakudo/Moar where running the heartbeat in a separate
     # thread hangs the program. So for the time being we interleave things.
@@ -80,10 +101,8 @@ method start() {
     # them at once. Thus we have to cascade the polls, one after the other.
     my $i = 0;
     loop {
-        say "# Polling hearbeat ($i)...";
         if poll_one($!hb_socket, 500_000, :in) {
-            say "# Heart beating";
-            $!hb_socket.send: $!hb_socket.receive(0);
+            $!hb_socket.send: $!hb_socket.receive;
         }
         if poll_one($!shell, 0, :in) {
             self!shell_message
@@ -105,13 +124,14 @@ method start() {
 }
 
 method !shell_message() {
-    say "# Message on shell:";
     my $message = self!read_message: $!shell;
+    say "# Message on shell: $message<header><msg_type>";
     given $message<header><msg_type> {
         when 'kernel_info_request' {
             my $reply = {
                 protocol_version => '5.0',
                 implementation => 'IPerl6',
+                implementation_version => '0.0.1',
                 language_info => {
                     name => 'perl6',
                     version => '0.1.0',
@@ -122,8 +142,76 @@ method !shell_message() {
             };
             self!send: $!shell, $reply, type => 'kernel_info_reply', parent => $message
         }
-        default { die "Unknown message type: {to-json $message<header>}" }
+        when 'history_request' {
+            self!history_request: $message;
+        }
+        when 'execute_request' {
+            self!execute: $message;
+        }
+        default { die "Unknown message type: {to-json $message<header>}\n{to-json $message<content>}" }
     }
+}
+
+method !history_request($message) {
+    # XXX: Since we haven't actually implemented execution yet, we can just
+    # cheat here and always send back an empty history list.
+    self!send: $!shell, {history => []}, type => 'history_reply', parent => $message;
+}
+
+method !execute($message) {
+    my $code = $message<content><code>;
+    my $*CTXSAVE := $!compiler;
+    my $*MAIN_CTX;
+
+    # TODO: Handle silent, store_history and user_expressions parameters
+    # TODO: Rebroadcast code input on the IOpub socket (looking at the
+    # ipykernel/kernelbase.py code, looks like it should have the original
+    # request as its parent).
+
+    @!history.push: $code;
+
+    my $result;
+    say "# Executing `$code'";
+    self!busy;
+    {
+        CATCH { say "SHENANIGANS!" }
+        my $*OUT = $!stdout;
+        my $*ERR = $!stderr;
+        $result := $!compiler.eval($code, :outer_ctx($!save_ctx));
+    }
+
+    if nqp::defined($*MAIN_CTX) { $!save_ctx := $*MAIN_CTX }
+
+    say $result;
+
+    self!send: $!shell, {status => 'ok', execution_count => $!exec_counter},
+        type => 'execute_reply', parent => $message;
+
+    self!flush_output: $!stdout, 'stdout', $message;
+    self!flush_output: $!stderr, 'stderr', $message;
+
+    self!send: $!iopub, {execution_count => $!exec_counter, data => {'text/plain' => $result.gist}},
+        type => 'execute_result', parent => $message;
+    self!idle;
+    $!exec_counter++;
+}
+
+method !flush_output($stream, $name, $parent) {
+    my $output = $stream.get-output;
+    self!send($!iopub, {:$name, text => $output}, type => 'stream', :$parent)
+        if $output;
+}
+
+method !starting() {
+    self!send: $!iopub, {execution_state => 'starting'}, type => 'status';
+}
+
+method !busy() {
+    self!send: $!iopub, {execution_state => 'busy'}, type => 'status';
+}
+
+method !idle() {
+    self!send: $!iopub, {execution_state => 'idle'}, type => 'status';
 }
 
 # Str.encode returns a Blob[unit8], whereas we want a Buf[uint8] in the eqv
@@ -155,7 +243,6 @@ method !read_message(Net::ZMQ::Socket $s) {
         last if not $s.getopt: ZMQ_RCVMORE;
     }
 
-    say "# routing={+@routing}; message={+@message}";
     my $hmac = hmac-hex $!key, @message[1] ~ @message[2] ~ @message[3] ~ @message[4], &sha256;
     die "HMAC verification failed!" if $hmac ne @message.shift.decode;
 
@@ -164,14 +251,32 @@ method !read_message(Net::ZMQ::Socket $s) {
     my $metadata = from-json @message.shift.decode;
     my $content  = from-json @message.shift.decode;
 
+    #say to-json $header;
+
     return {ids => @routing, header => $header, parent => $parent,
         metadata => $metadata, content => $content, extra_data => @message};
 }
 
-method !send($socket, $message, :$type, :$parent) {
+method !send($socket, $message, :$type!, :$parent = {}) {
+    say "# Sending ($type)";
+
+    if $parent {
+        for $parent<ids>.list {
+            $socket.send($_, ZMQ_SNDMORE);
+        }
+    }
     $socket.send: "<IDS|MSG>", ZMQ_SNDMORE;
 
-    my $header = {};
+    #say(to-json $message);# if $type eq 'execute_result';
+
+    my $header = {
+        date => ~DateTime.new(now),
+        msg_id => ~UUID.new(:version(4)),
+        msg_type => $type,
+        session => $!session,
+        username => 'bogus', # TODO: Set this correctly.
+        version => '5.0',
+    };
     my $metadata = {};
 
     my $header_bytes  = to-json($header).encode;
