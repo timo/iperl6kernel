@@ -88,6 +88,7 @@ method !make_address($port) {
     return "$!transport://$!ip$sep$port";
 }
 
+has $!running = False;
 method start() {
     # There are two things making the main run loop here weirder than
     # necessary. First is the hang bug described in !setup heartbeat; thus we
@@ -99,8 +100,8 @@ method start() {
     # Second is a limitation in Net::ZMQ (due in turn to a limitation in
     # NativeCall), where we can only poll single sockets at a time, not all of
     # them at once. Thus we have to cascade the polls, one after the other.
-    my $i = 0;
-    loop {
+    $!running = True;
+    while $!running {
         if poll_one($!hb_socket, 500_000, :in) {
             $!hb_socket.send: $!hb_socket.receive;
         }
@@ -119,7 +120,6 @@ method start() {
             say "# Message on stdin:";
             say self!read_message: $!stdin;
         }
-        $i++
     }
 }
 
@@ -152,7 +152,11 @@ method !shell_message() {
         when 'complete_request' { die 'Completion NYI' }
         when 'is_complete_request' { die 'Is-complete NYI' }
         when 'connect_request' { die 'Connect NYI' }
-        when 'shutdown_request' { die 'Shutdown/restart NYI' }
+        when 'shutdown_request' {
+            # TODO: Handle restart requests correctly.
+            self!send: $!shell, {restart => False}, type => 'shutdown_reply', :$parent;
+            $!running = False;
+        }
         # Comms are a way for kernels and frontends to extend the IPython
         # protocol with custom messages. Since we currently don't support any
         # extensions, when can just ignore the messages related to them and
