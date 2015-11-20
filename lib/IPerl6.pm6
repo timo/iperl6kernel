@@ -183,21 +183,39 @@ method !execute($parent) {
     @!history.push: $code;
 
     my $result;
+    my $success = True;
+    my $e;
+    my $reply = {execution_count => $!exec_counter};
     say "# Executing `$code'";
     self!busy;
     {
-        CATCH { say "SHENANIGANS!" }
+        # Catch any exception, and store it away to be processed into the
+        # reply.
+        CATCH {
+            default {
+                $e = $_;
+                $success = False;
+            }
+        }
         my $*OUT = $!stdout;
         my $*ERR = $!stderr;
         $result := $!compiler.eval($code, :outer_ctx($!save_ctx));
+    }
+    $reply<status> = $success ?? 'ok' !! 'error';
+    if $success {
+        # TODO: Handle user_expressions here.
+    }
+    else {
+        $result<ename> = $e.^name;
+        $result<evalue> = ~$e;
+        $result<traceback> = $e.backtrace.list.map: ~*;
     }
 
     if nqp::defined($*MAIN_CTX) { $!save_ctx := $*MAIN_CTX }
 
     say $result;
 
-    self!send: $!shell, {status => 'ok', execution_count => $!exec_counter},
-        type => 'execute_reply', :$parent;
+    self!send: $!shell, $reply, type => 'execute_reply', :$parent;
 
     self!flush_output: $!stdout, 'stdout', $parent;
     self!flush_output: $!stderr, 'stderr', $parent;
