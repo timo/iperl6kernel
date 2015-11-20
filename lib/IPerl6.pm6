@@ -124,9 +124,9 @@ method start() {
 }
 
 method !shell_message() {
-    my $message = self!read_message: $!shell;
-    say "# Message on shell: $message<header><msg_type>";
-    given $message<header><msg_type> {
+    my $parent = self!read_message: $!shell;
+    say "# Message on shell: $parent<header><msg_type>";
+    given $parent<header><msg_type> {
         when 'kernel_info_request' {
             my $reply = {
                 protocol_version => '5.0',
@@ -140,13 +140,13 @@ method !shell_message() {
                 },
                 banner => 'Welcome to IPerl6!',
             };
-            self!send: $!shell, $reply, type => 'kernel_info_reply', parent => $message
+            self!send: $!shell, $reply, type => 'kernel_info_reply', :$parent
         }
         when 'history_request' {
-            self!history_request: $message;
+            self!history_request: $parent;
         }
         when 'execute_request' {
-            self!execute: $message;
+            self!execute: $parent;
         }
         when 'inspect_request' { die 'Inspection NYI' }
         when 'complete_request' { die 'Completion NYI' }
@@ -157,21 +157,21 @@ method !shell_message() {
         # protocol with custom messages. Since we currently don't support any
         # extensions, when can just ignore the messages related to them and
         # return a hardcoded empty list of currently open comms.
-        when 'comm_info_request' { self!send: $!shell, {comms => {}}, type => 'comm_info_reply', parent => $message }
+        when 'comm_info_request' { self!send: $!shell, {comms => {}}, type => 'comm_info_reply', :$parent }
         when 'comm_open' {}
         when 'comm_msg' {}
         when 'comm_close' {}
-        default { die "Unknown message type: {to-json $message<header>}\n{to-json $message<content>}" }
+        default { die "Unknown message type: {to-json $parent<header>}\n{to-json $parent<content>}" }
     }
 }
 
-method !history_request($message) {
+method !history_request($parent) {
     # TODO: Actually implement this.
-    self!send: $!shell, {history => []}, type => 'history_reply', parent => $message;
+    self!send: $!shell, {history => []}, type => 'history_reply', :$parent;
 }
 
-method !execute($message) {
-    my $code = $message<content><code>;
+method !execute($parent) {
+    my $code = $parent<content><code>;
     my $*CTXSAVE := $!compiler;
     my $*MAIN_CTX;
 
@@ -197,13 +197,13 @@ method !execute($message) {
     say $result;
 
     self!send: $!shell, {status => 'ok', execution_count => $!exec_counter},
-        type => 'execute_reply', parent => $message;
+        type => 'execute_reply', :$parent;
 
-    self!flush_output: $!stdout, 'stdout', $message;
-    self!flush_output: $!stderr, 'stderr', $message;
+    self!flush_output: $!stdout, 'stdout', $parent;
+    self!flush_output: $!stderr, 'stderr', $parent;
 
     self!send: $!iopub, {execution_count => $!exec_counter, data => {'text/plain' => $result.gist}},
-        type => 'execute_result', parent => $message;
+        type => 'execute_result', :$parent;
     self!idle;
     $!exec_counter++;
 }
