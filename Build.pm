@@ -7,7 +7,7 @@ my $pbc_to_exe = 'pbc_to_exe';
 my $executable = $*OS eq 'MSWin32' ?? 'iperl6kernel.exe' !! 'iperl6kernel';
 
 class Build is Panda::Builder {
-    method build(Pies::Project $p) {
+    method build($p) {
         my $workdir = $.resources.workdir($p);
 
         shell "$nqp --vmlibs=perl6_group,perl6_ops --target=pir "

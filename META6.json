@@ -1,7 +1,13 @@
 {
     "name"        : "IPerl6",
     "version"     : "*",
+    "perl6"       : "6.*",
     "description" : "an ipython kernel for rakudo",
     "depends"     : ["Digest", "Digest::HMAC", "JSON::Fast", "Net::ZMQ"],
+    "provides"    : {
+        "IPerl6::Gobble" : "lib/IPerl6/Gobble.pm6",
+        "IPerl6::ZMQ"    : "lib/IPerl6/ZMQ.pm6",
+        "IPerl6"         : "lib/IPerl6.pm6"
+    },
     "source-url"  : "git://github.com/timo/iperl6kernel.git"
 }
